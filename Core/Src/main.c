@@ -44,6 +44,7 @@ ADC_HandleTypeDef hadc1;
 
 TIM_HandleTypeDef htim1;
 
+UART_HandleTypeDef huart1;
 UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
@@ -52,14 +53,15 @@ int HEARTBEAT = 50;
 uint16_t ADC_VAL[2];
 
 // HC-SRO4
-#define TRIG_PIN GPIO_PIN_9
-#define TRIG_PORT GPIOA
-#define ECHO_PIN GPIO_PIN_8
-#define ECHO_PORT GPIOA
+#define TRIG_PIN GPIO_PIN_1
+#define TRIG_PORT GPIOC
+#define ECHO_PIN GPIO_PIN_0
+#define ECHO_PORT GPIOC
 uint32_t pMillis;
 uint32_t Value1 = 0;
 uint32_t Value2 = 0;
 uint16_t Distance  = 0;  // cm
+int DISTANCE_THRESHOLD = 5; // cm
 
 // Sound Sensor
 int SOUND_THRESHOLD = 2110;
@@ -69,8 +71,9 @@ int curr_cooldown = 0;
 // LDR
 int LDR_THRESHOLD = 125;
 
-// UART for debugging
+// UART
 char buffer[50];
+int Status = 0;
 
 /* USER CODE END PV */
 
@@ -80,13 +83,15 @@ static void MX_GPIO_Init(void);
 static void MX_ADC1_Init(void);
 static void MX_USART2_UART_Init(void);
 static void MX_TIM1_Init(void);
+static void MX_USART1_UART_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-void Read_Distance(){
+
+int Read_Distance(){
 	HAL_GPIO_WritePin(TRIG_PORT, TRIG_PIN, GPIO_PIN_SET);  // pull the TRIG pin HIGH
 	 __HAL_TIM_SET_COUNTER(&htim1, 0);
 	 while (__HAL_TIM_GET_COUNTER (&htim1) < 10);  // wait for 10 us
@@ -102,7 +107,8 @@ void Read_Distance(){
 	 while ((HAL_GPIO_ReadPin (ECHO_PORT, ECHO_PIN)) && pMillis + 50 > HAL_GetTick());
 	 Value2 = __HAL_TIM_GET_COUNTER (&htim1);
 
-	 Distance = (Value2-Value1)* 0.034/2;
+	 Distance = (int)(((float)(Value2-Value1)) * 0.034 / 2);
+	 return Distance;
 //	 sprintf(buffer, "%d\r\n", Distance);
 //	 HAL_UART_Transmit(&huart2, buffer, strlen(buffer), HAL_MAX_DELAY);
 }
@@ -168,6 +174,7 @@ int main(void)
   MX_ADC1_Init();
   MX_USART2_UART_Init();
   MX_TIM1_Init();
+  MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
 
   // For HC-SRO4
@@ -185,20 +192,34 @@ int main(void)
 
     /* USER CODE BEGIN 3 */
 
-	  // LED
-	 HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_5);
-	 //HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_7);
-	 if(curr_cooldown <= 0){
-		 HAL_GPIO_WritePin(GPIOC, GPIO_PIN_7, GPIO_PIN_RESET);
-	 }else{
-		 //Debug
-		 if(curr_cooldown % 1000 == 0){
-			 sprintf(buffer, "Close LED in %d\r\n", curr_cooldown / 1000);
-			 HAL_UART_Transmit(&huart2, buffer, strlen(buffer), HAL_MAX_DELAY);
-		 }
+	  // LED Logic
+	 HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_5); // Debug
 
-		 curr_cooldown = (curr_cooldown - HEARTBEAT) <= 0 ? 0 : curr_cooldown - HEARTBEAT;
+	 if (HAL_UART_Receive(&huart1, buffer, strlen(buffer), 1000) == HAL_OK) {
+		 //HAL_UART_Transmit(&huart2, buffer, strlen(buffer), HAL_MAX_DELAY);
+	 }
+
+	 if(buffer[0] == '0'){
+		 HAL_GPIO_WritePin(GPIOC, GPIO_PIN_7, GPIO_PIN_RESET);
+		 Status = 0;
+	 }else if(buffer[0] == '1'){
 		 HAL_GPIO_WritePin(GPIOC, GPIO_PIN_7, GPIO_PIN_SET);
+		 Status = 1;
+	 }else if(buffer[0] == '2'){
+		 if(curr_cooldown <= 0){
+			 HAL_GPIO_WritePin(GPIOC, GPIO_PIN_7, GPIO_PIN_RESET);
+			 Status = 0;
+		 }else{
+			 //Debug
+			 if(curr_cooldown % 1000 == 0){
+				 sprintf(buffer, "Close LED in %d\r\n", curr_cooldown / 1000);
+				 HAL_UART_Transmit(&huart2, buffer, strlen(buffer), HAL_MAX_DELAY);
+			 }
+
+			 curr_cooldown = (curr_cooldown - HEARTBEAT) <= 0 ? 0 : curr_cooldown - HEARTBEAT;
+			 HAL_GPIO_WritePin(GPIOC, GPIO_PIN_7, GPIO_PIN_SET);
+			 Status = 1;
+		 }
 	 }
 
 	 // READ LDR
@@ -220,7 +241,7 @@ int main(void)
 
 	  int adc_ldr = ADC_VAL[0];
 	  int adc_sound = ADC_VAL[1];
-
+	  int distance = Read_Distance();
 
 	  // Sound Sensor logic
 	 if(adc_sound >= SOUND_THRESHOLD){
@@ -229,7 +250,6 @@ int main(void)
 
 		 curr_cooldown = COOLDOWN * 1000; // set cooldown
 	 }
-
 
 	 // LDR logic
 	 if(adc_ldr <= LDR_THRESHOLD){
@@ -242,12 +262,22 @@ int main(void)
 	 	 curr_cooldown = COOLDOWN * 1000; // set cooldown
 	 }
 
-	 //HC-SRO4
-	 //Read_Distance();
+	 //HC-SRO4 logic
+	 if(distance <= DISTANCE_THRESHOLD){
+		 // Debugging
+		 if(curr_cooldown == 0){
+			sprintf(buffer, "Distance Trigger Value: %d\r\n", distance); // debug
+			HAL_UART_Transmit(&huart2, buffer, strlen(buffer), HAL_MAX_DELAY);
+		 }
+
+		 curr_cooldown = COOLDOWN * 1000; // set cooldown
+	 }
+
+	 sprintf(buffer, "%d,%d,%d,%d\r\n", adc_ldr, adc_sound, distance, Status);
+	 //HAL_UART_Transmit(&huart2, buffer, strlen(buffer), 1000);
+	 HAL_UART_Transmit(&huart1, buffer, strlen(buffer), 1000);
 
 	 HAL_Delay(HEARTBEAT);
-
-
   }
   /* USER CODE END 3 */
 }
@@ -337,22 +367,22 @@ static void MX_ADC1_Init(void)
 
   /** Configure for the selected ADC regular channel its corresponding rank in the sequencer and its sample time.
   */
-//  sConfig.Channel = ADC_CHANNEL_0;
-//  sConfig.Rank = 1;
-//  sConfig.SamplingTime = ADC_SAMPLETIME_3CYCLES;
-//  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
-//  {
-//    Error_Handler();
-//  }
-//
-//  /** Configure for the selected ADC regular channel its corresponding rank in the sequencer and its sample time.
-//  */
-//  sConfig.Channel = ADC_CHANNEL_1;
-//  sConfig.Rank = 2;
-//  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
-//  {
-//    Error_Handler();
-//  }
+  sConfig.Channel = ADC_CHANNEL_0;
+  sConfig.Rank = 1;
+  sConfig.SamplingTime = ADC_SAMPLETIME_3CYCLES;
+  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Configure for the selected ADC regular channel its corresponding rank in the sequencer and its sample time.
+  */
+  sConfig.Channel = ADC_CHANNEL_1;
+  sConfig.Rank = 2;
+  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
   /* USER CODE BEGIN ADC1_Init 2 */
 
   /* USER CODE END ADC1_Init 2 */
@@ -402,6 +432,39 @@ static void MX_TIM1_Init(void)
   /* USER CODE BEGIN TIM1_Init 2 */
 
   /* USER CODE END TIM1_Init 2 */
+
+}
+
+/**
+  * @brief USART1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_USART1_UART_Init(void)
+{
+
+  /* USER CODE BEGIN USART1_Init 0 */
+
+  /* USER CODE END USART1_Init 0 */
+
+  /* USER CODE BEGIN USART1_Init 1 */
+
+  /* USER CODE END USART1_Init 1 */
+  huart1.Instance = USART1;
+  huart1.Init.BaudRate = 115200;
+  huart1.Init.WordLength = UART_WORDLENGTH_8B;
+  huart1.Init.StopBits = UART_STOPBITS_1;
+  huart1.Init.Parity = UART_PARITY_NONE;
+  huart1.Init.Mode = UART_MODE_TX_RX;
+  huart1.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+  huart1.Init.OverSampling = UART_OVERSAMPLING_16;
+  if (HAL_UART_Init(&huart1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN USART1_Init 2 */
+
+  /* USER CODE END USART1_Init 2 */
 
 }
 
@@ -456,10 +519,10 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOB_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOA, LD2_Pin|GPIO_PIN_7|GPIO_PIN_9, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_1|GPIO_PIN_7, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_7, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOA, LD2_Pin|GPIO_PIN_7, GPIO_PIN_RESET);
 
   /*Configure GPIO pin : B1_Pin */
   GPIO_InitStruct.Pin = B1_Pin;
@@ -467,8 +530,21 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(B1_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : LD2_Pin PA7 PA9 */
-  GPIO_InitStruct.Pin = LD2_Pin|GPIO_PIN_7|GPIO_PIN_9;
+  /*Configure GPIO pin : PC0 */
+  GPIO_InitStruct.Pin = GPIO_PIN_0;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
+
+  /*Configure GPIO pins : PC1 PC7 */
+  GPIO_InitStruct.Pin = GPIO_PIN_1|GPIO_PIN_7;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
+
+  /*Configure GPIO pins : LD2_Pin PA7 */
+  GPIO_InitStruct.Pin = LD2_Pin|GPIO_PIN_7;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
@@ -477,19 +553,6 @@ static void MX_GPIO_Init(void)
   /*Configure GPIO pin : PA6 */
   GPIO_InitStruct.Pin = GPIO_PIN_6;
   GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
-
-  /*Configure GPIO pin : PC7 */
-  GPIO_InitStruct.Pin = GPIO_PIN_7;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
-
-  /*Configure GPIO pin : PA8 */
-  GPIO_InitStruct.Pin = GPIO_PIN_8;
-  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
