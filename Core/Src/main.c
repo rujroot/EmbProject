@@ -61,7 +61,7 @@ uint32_t pMillis;
 uint32_t Value1 = 0;
 uint32_t Value2 = 0;
 uint16_t Distance  = 0;  // cm
-int DISTANCE_THRESHOLD = 5; // cm
+int DISTANCE_THRESHOLD = 100; // cm
 
 // Sound Sensor
 int SOUND_THRESHOLD = 2110;
@@ -243,35 +243,37 @@ int main(void)
 	  int adc_sound = ADC_VAL[1];
 	  int distance = Read_Distance();
 
-	  // Sound Sensor logic
-	 if(adc_sound >= SOUND_THRESHOLD){
-		 sprintf(buffer, "Sound Trigger ADC Value: %lu\r\n", adc_sound); // debug
-		 HAL_UART_Transmit(&huart2, buffer, strlen(buffer), HAL_MAX_DELAY);
-
-		 curr_cooldown = COOLDOWN * 1000; // set cooldown
-	 }
-
 	 // LDR logic
 	 if(adc_ldr <= LDR_THRESHOLD){
-		 // Debugging
-		 if(curr_cooldown == 0){
-			sprintf(buffer, "LDR Trigger ADC Value: %lu\r\n", adc_ldr); // debug
-			HAL_UART_Transmit(&huart2, buffer, strlen(buffer), HAL_MAX_DELAY);
+		 // Sound Sensor logic
+		 if(adc_sound >= SOUND_THRESHOLD){
+			 sprintf(buffer, "Sound Trigger ADC Value: %lu\r\n", adc_sound); // debug
+			 HAL_UART_Transmit(&huart2, buffer, strlen(buffer), HAL_MAX_DELAY);
+
+			 curr_cooldown = COOLDOWN * 1000; // set cooldown
 		 }
 
-	 	 curr_cooldown = COOLDOWN * 1000; // set cooldown
-	 }
+		 //HC-SRO4 logic
+		 if(distance <= DISTANCE_THRESHOLD){
+			 // Debugging
+			 if(curr_cooldown == 0){
+				sprintf(buffer, "Distance Trigger Value: %d\r\n", distance); // debug
+				HAL_UART_Transmit(&huart2, buffer, strlen(buffer), HAL_MAX_DELAY);
+			 }
 
-	 //HC-SRO4 logic
-	 if(distance <= DISTANCE_THRESHOLD){
-		 // Debugging
-		 if(curr_cooldown == 0){
-			sprintf(buffer, "Distance Trigger Value: %d\r\n", distance); // debug
-			HAL_UART_Transmit(&huart2, buffer, strlen(buffer), HAL_MAX_DELAY);
+			 curr_cooldown = COOLDOWN * 1000; // set cooldown
 		 }
 
-		 curr_cooldown = COOLDOWN * 1000; // set cooldown
+//		 // Debugging
+//		 if(curr_cooldown == 0){
+//			sprintf(buffer, "LDR Trigger ADC Value: %lu\r\n", adc_ldr); // debug
+//			HAL_UART_Transmit(&huart2, buffer, strlen(buffer), HAL_MAX_DELAY);
+//		 }
+//
+//	 	 curr_cooldown = COOLDOWN * 1000; // set cooldown
 	 }
+
+
 
 	 sprintf(buffer, "%d,%d,%d,%d\r\n", adc_ldr, adc_sound, distance, Status);
 	 //HAL_UART_Transmit(&huart2, buffer, strlen(buffer), 1000);
